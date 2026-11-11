@@ -11,7 +11,7 @@ draft-pick odds.
 - **PyCharm:** open this folder, set the interpreter to `.venv`, then create a Run
   Configuration: *Module name* `streamlit`, *Parameters* `run draft_predictor_app.py`, *Working dir* this folder.
 
-You need R with `nflseedR`, `data.table` and `jsonlite` installed. These are already on this Mac.
+Everything is Python (see `requirements.txt`); R is not needed.
 
 ## How it works
 
@@ -20,12 +20,18 @@ You need R with `nflseedR`, `data.table` and `jsonlite` installed. These are alr
 | Schedule & results | `odds_and_schedule.py` | nflverse schedule (the same data `nflreadr::load_schedules()` reads) |
 | Moneylines | `odds_and_schedule.py` | VegasInsider Las Vegas **consensus** moneylines (current week auto-pulled; other weeks imported), then nflverse moneylines/spreads as a fallback |
 | Weeks with no lines yet | `odds_and_schedule.py` | Team ratings fit to this season's closing spreads; win prob = Φ(spread / 13.5) |
-| Simulation + tiebreakers | `nflseedr_simulation.R` | `nflseedR::nfl_simulations()`: official NFL tiebreakers through SOS, playoffs, draft order |
-| Run R + summarize | `season_simulator.py` | Sends schedule/picks/odds to the R engine, summarizes pick odds and the rooting guide |
+| Standings + tiebreakers | `nfl_engine.py` | A Python translation of nflseedR 2.0.2: official NFL tiebreakers through SOS, playoff bracket, draft order |
+| Simulate + summarize | `season_simulator.py` | Simulates the remaining games with your picks locked in, summarizes pick odds and the rooting guide |
 | UI | `draft_predictor_app.py` | Streamlit: draft odds, pick-a-winner, team outlook + rooting guide, lines & ratings |
 
 Vig is removed from moneylines before they're turned into probabilities. A game you pick is
-fed to nflseedR as already played, so it's locked into every simulation.
+treated as already played, so it's locked into every simulation.
+
+`nfl_engine.py` was checked against nflseedR on identical game results (15,000 simulated
+seasons and every week of 2020-2026): every division rank, seed, playoff exit and draft pick
+matched except where a coin toss decided it. It differs from nflseedR only in three edge cases
+where nflseedR errors out ("infinite loop"), e.g. 2020 week 12 and 2025 week 1; there it follows
+the NFL rulebook instead.
 
 ## Notes
 

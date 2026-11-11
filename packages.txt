@@ -1,3 +1,0 @@
-r-base
-r-cran-data.table
-r-cran-jsonlite

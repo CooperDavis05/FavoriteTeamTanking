@@ -2,5 +2,4 @@
 __pycache__/
 .idea/
 .sim_cache/
-.r-lib/
 .DS_Store

@@ -225,7 +225,7 @@ run_key = (season, picks_key, n_sims, pulled_at, tuple(probs.p_home.round(4)))
 # (e.g. once after each week's games) and reused by every load after that, even after a restart.
 def snapshot_path() -> Path:
     played = sched.loc[(sched.game_type == "REG") & sched.result.notna(), ["game_id", "result"]]
-    sig = f"{season}|{n_sims}|{LOAD_SEED}|" + ",".join(f"{g}:{r:g}" for g, r in played.itertuples(index=False))
+    sig = f"py|{season}|{n_sims}|{LOAD_SEED}|" + ",".join(f"{g}:{r:g}" for g, r in played.itertuples(index=False))
     return SNAPSHOT_DIR / f"load_{hashlib.sha1(sig.encode()).hexdigest()[:16]}.pkl"
 
 
@@ -256,7 +256,7 @@ pending = sum(1 for g in set(picks) | set(ran_picks) if picks.get(g) != ran_pick
 remaining = len(probs)
 st.markdown(ss.band(
     f"{season} NFL Draft Predictor",
-    f"{remaining} regular-season games left · Official tiebreakers via nflseedR · "
+    f"{remaining} regular-season games left · Official NFL tiebreakers · "
     f"{len(picks)} game{'s' if len(picks) != 1 else ''} picked by you", kind="page"),
     unsafe_allow_html=True)
 st.write("")
@@ -281,7 +281,7 @@ with c3:   # Report colors, leftmost
                 name=lambda t: "Cornell Big Red" if t == "Cornell" else t, cols=4)
 with c4:
     st.select_slider("Simulations", options=SIM_OPTIONS, key="n_sims",
-                     help="More simulations = smoother odds, slower runs (~5s per 1,000). "
+                     help="More simulations = smoother odds, slower runs (~1.5s per 1,000). "
                           "Takes effect when you hit Update odds.")
 
 if remaining == 0:
@@ -315,7 +315,7 @@ elif stale and not picks and not run_clicked and load_snapshot() is not None:
 elif run_clicked:
     prev = st.session_state.get("result")
     seed = random.randint(1, 2**31 - 1)   # a fresh seed every time you simulate again
-    with st.spinner(f"Updating odds: simulating {n_sims:,} seasons with nflseedR (seed {seed})…"):
+    with st.spinner(f"Updating odds: simulating {n_sims:,} seasons (seed {seed})…"):
         try:
             res = cached_sim(sched, probs, ratings, ratings_key, picks_key, n_sims, seed)
         except Exception as exc:
@@ -406,7 +406,7 @@ tab_games, tab_odds, tab_team, tab_lines, tab_about = st.tabs(
 N_TEAMS = len(summary)
 REC_HELP = "Current record plus your picks. [+W-L] is the part from games you picked."
 # Draft order if the season ended today, the way Tankathon does it: the 14 teams currently in the
-# playoff field (nflseedR seeds, official tiebreakers, your picks included) plays out the bracket
+# playoff field (official tiebreakers, your picks included) plays out the bracket
 # with the better record winning and takes picks 19-32 by round; everyone else takes 1-18.
 try:
     live = simulator.tankathon_order(summary, cached_seeds(sched, picks_key))
@@ -788,8 +788,9 @@ with tab_about:
             "2. **nflverse** moneylines, then the nflverse spread\n"
             f"3. **Rating model**: team ratings fit to this season's closing spreads "
             f"({ratings.n_games} games, home field = {ratings.hfa:+.1f} pts)\n\n"
-            "The rest of the season is then simulated with nflseedR, using the official NFL "
-            "tiebreakers for standings, playoffs and draft order."
+            "The rest of the season is then simulated 1,000+ times, using the official NFL "
+            "tiebreakers for standings, playoffs and draft order (the same rules as the "
+            "nflseedR package, rebuilt in Python)."
         )
 
     with lines_col:

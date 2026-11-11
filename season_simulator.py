@@ -1,120 +1,96 @@
-"""Run the nflseedR engine (nflseedr_simulation.R) and summarize the draft-order results."""
+"""Simulate the season with nfl_engine (a Python translation of nflseedR) and summarize the
+draft-order results."""
 from __future__ import annotations
 
-import json
-import os
-import shutil
-import subprocess
-import tempfile
+import time
 from dataclasses import dataclass
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+import nfl_engine as engine
 from odds_and_schedule import MARGIN_SD, Ratings
-
-HERE = Path(__file__).resolve().parent
-ENGINE = HERE / "nflseedr_simulation.R"
-
-
-def find_rscript() -> str:
-    for cand in (shutil.which("Rscript"), "/usr/local/bin/Rscript", "/opt/homebrew/bin/Rscript",
-                 "/Library/Frameworks/R.framework/Resources/bin/Rscript"):
-        if cand and Path(cand).exists():
-            ensure_r_packages(cand)
-            return cand
-    raise FileNotFoundError("Rscript not found - install R and the nflseedR package.")
-
-
-# R packages the app installs itself when the machine doesn't have them (Streamlit Cloud).
-R_LIB = HERE / ".r-lib"
-_r_ready = False
-
-
-def ensure_r_packages(rscript: str) -> None:
-    global _r_ready
-    if _r_ready:
-        return
-    R_LIB.mkdir(exist_ok=True)
-    # Added in front of the usual libraries (R_LIBS, unlike R_LIBS_USER, keeps the user library too)
-    os.environ["R_LIBS"] = str(R_LIB)
-    check = subprocess.run([rscript, "-e", "library(nflseedR)"], capture_output=True, text=True)
-    if check.returncode != 0:
-        proc = subprocess.run([rscript, str(HERE / "install_r_packages.R"), str(R_LIB)],
-                              capture_output=True, text=True, cwd=HERE)
-        if proc.returncode != 0:
-            raise RuntimeError(f"Couldn't install nflseedR:\n{proc.stderr[-3000:]}")
-    _r_ready = True
 
 
 @dataclass
 class SimResult:
-    standings: pd.DataFrame      # one row per sim x team (nflseedR output)
+    standings: pd.DataFrame      # one row per sim x team
     sim_games: pd.DataFrame      # simulated outcomes of games left to chance
     draft_today: pd.DataFrame    # draft order if the season ended today
     n_sims: int
     elapsed_sec: float
 
 
-def run_simulation(sched: pd.DataFrame, probs: pd.DataFrame, ratings: Ratings,
-                   picks: dict[str, str], n_sims: int = 1000, seed: int | None = None) -> SimResult:
-    """picks maps game_id -> winning team abbreviation for games the user decided."""
-    reg = sched[sched["game_type"] == "REG"].copy()
+def _with_picks(sched: pd.DataFrame, picks: dict[str, str]) -> pd.DataFrame:
+    """Regular season with the user's picks filled in as results (+1 home win, -1 away win)."""
+    reg = sched[sched["game_type"] == "REG"].reset_index(drop=True).copy()
     forced = reg["game_id"].map(picks)
     is_forced = forced.notna() & reg["result"].isna()
     reg.loc[is_forced, "result"] = np.where(forced[is_forced] == reg.loc[is_forced, "home_team"], 1, -1)
-
-    open_games = probs[~probs["game_id"].isin(picks)]
-    p_lookup = {f"{w}_{a}_{h}": float(p) for w, a, h, p in
-                zip(open_games.week, open_games.away_team, open_games.home_team, open_games.p_home)}
-
-    cols = ["season", "game_type", "week", "away_team", "home_team", "away_rest", "home_rest",
-            "location", "result"]
-    games = reg[cols].astype(object).where(reg[cols].notna(), None)
-    payload = {
-        "games": games.to_dict(orient="list"),
-        "p_lookup": p_lookup or {"_": 0.5},
-        "ratings": ratings.team, "hfa": ratings.hfa, "margin_sd": MARGIN_SD,
-        "n_sims": int(n_sims), "seed": seed,
-        "chunks": 1 if n_sims <= 2500 else min(4, os.cpu_count() or 1),
-    }
-    with tempfile.TemporaryDirectory() as tmp:
-        inp = Path(tmp) / "input.json"
-        inp.write_text(json.dumps(payload))
-        proc = subprocess.run([find_rscript(), str(ENGINE), str(inp), tmp],
-                              capture_output=True, text=True, cwd=HERE)
-        if proc.returncode != 0:
-            raise RuntimeError(f"nflseedR engine failed:\n{proc.stderr[-3000:]}")
-        meta = json.loads((Path(tmp) / "meta.json").read_text())
-        return SimResult(
-            standings=pd.read_csv(Path(tmp) / "standings.csv"),
-            sim_games=pd.read_csv(Path(tmp) / "sim_games.csv"),
-            draft_today=pd.read_csv(Path(tmp) / "draft_today.csv"),
-            n_sims=int(meta["n_sims"]), elapsed_sec=float(meta["elapsed_sec"]),
-        )
+    return reg
 
 
-SEEDS_ENGINE = HERE / "nflseedr_standings.R"
+def run_simulation(sched: pd.DataFrame, probs: pd.DataFrame, ratings: Ratings,
+                   picks: dict[str, str], n_sims: int = 1000, seed: int | None = None) -> SimResult:
+    """picks maps game_id -> winning team abbreviation for games the user decided. Unplayed
+    games use the app's win probabilities (lines or the rating model); playoff games use the
+    team ratings with home field for the higher seed, a neutral site for the Super Bowl."""
+    t0 = time.time()
+    rng = np.random.default_rng(seed)
+    reg = _with_picks(sched, picks)
+    home = reg.home_team.map(engine.IDX).to_numpy()
+    away = reg.away_team.map(engine.IDX).to_numpy()
+    open_ = reg.result.isna().to_numpy()
+
+    # win probability for every game still open: the app's number, else the rating model
+    p_of = dict(zip(probs.game_id, probs.p_home))
+    neutral = (reg.location.fillna("Home") == "Neutral").to_numpy()
+    r = np.array([ratings.team[t] for t in engine.TEAMS])
+    model_p = engine._phi((r[home] - r[away] + np.where(neutral, 0.0, ratings.hfa)) / MARGIN_SD)
+    p_home = np.array([p_of.get(g, np.nan) for g in reg.game_id])
+    p_home = np.where(np.isnan(p_home), model_p, p_home)
+
+    fixed = np.sign(reg.result.fillna(0).to_numpy(float))
+    outcome = np.tile(np.where(fixed > 0, 1.0, np.where(fixed < 0, 0.0, 0.5)), (n_sims, 1))
+    draws = rng.random((n_sims, int(open_.sum()))) < p_home[open_][None, :]
+    outcome[:, open_] = draws.astype(float)
+
+    se = engine.build_season(home, away, outcome)
+    div, conf, exit_, draft = engine.rank_all(
+        se, rng, exit_fn=lambda cr: engine.play_playoffs(cr, r, ratings.hfa, MARGIN_SD, rng))
+    standings = engine.standings_frame(se, div, conf, exit_, draft)
+
+    # games left to chance (not played, not picked), for the rooting guide
+    og = reg[open_]
+    sim_games = pd.DataFrame({
+        "sim": np.repeat(np.arange(1, n_sims + 1), len(og)),
+        "week": np.tile(og.week.to_numpy(), n_sims),
+        "away_team": np.tile(og.away_team.to_numpy(), n_sims),
+        "home_team": np.tile(og.home_team.to_numpy(), n_sims),
+        "home_win": draws.astype(int).ravel(),
+    })
+    try:
+        today = current_standings(sched, picks)[["team", "draft_rank", "sos", "sov"]]
+    except ValueError:
+        today = pd.DataFrame(columns=["team", "draft_rank", "sos", "sov"])
+    return SimResult(standings=standings, sim_games=sim_games, draft_today=today,
+                     n_sims=n_sims, elapsed_sec=time.time() - t0)
+
+
+def current_standings(sched: pd.DataFrame, picks: dict[str, str], seed: int = 0) -> pd.DataFrame:
+    """Standings if the season ended today (games played plus the user's picks), with division
+    ranks, conference seeds and draft order under the official tiebreakers."""
+    reg = _with_picks(sched, picks)
+    played = reg[reg.result.notna()]
+    if played.empty:                                     # preseason: nothing to rank yet
+        raise ValueError("No games have been played yet.")
+    return engine.current_standings(played.home_team, played.away_team, played.result,
+                                    np.random.default_rng(seed))
 
 
 def current_seeds(sched: pd.DataFrame, picks: dict[str, str]) -> pd.DataFrame:
-    """Division ranks and conference seeds from the games played so far plus the user's picks,
-    using nflseedR's official tiebreakers. Columns: team, conf, division, div_rank, conf_rank."""
-    reg = sched[sched["game_type"] == "REG"].copy()
-    forced = reg["game_id"].map(picks)
-    is_forced = forced.notna() & reg["result"].isna()
-    reg.loc[is_forced, "result"] = np.where(forced[is_forced] == reg.loc[is_forced, "home_team"], 1, -1)
-    cols = ["season", "week", "away_team", "home_team", "result"]
-    games = reg[cols].astype(object).where(reg[cols].notna(), None)
-    with tempfile.TemporaryDirectory() as tmp:
-        inp, out = Path(tmp) / "input.json", Path(tmp) / "seeds.csv"
-        inp.write_text(json.dumps({"games": games.to_dict(orient="list")}))
-        proc = subprocess.run([find_rscript(), str(SEEDS_ENGINE), str(inp), str(out)],
-                              capture_output=True, text=True, cwd=HERE)
-        if proc.returncode != 0:
-            raise RuntimeError(f"nflseedR standings failed:\n{proc.stderr[-3000:]}")
-        return pd.read_csv(out)
+    """Columns: team, conf, division, div_rank, conf_rank."""
+    return current_standings(sched, picks)[["team", "conf", "division", "div_rank", "conf_rank"]]
 
 
 def tankathon_order(records: pd.DataFrame, seeds: pd.DataFrame) -> pd.DataFrame:
