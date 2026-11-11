@@ -1,0 +1,6 @@
+streamlit>=1.50
+pandas>=2.2
+numpy>=2.0
+requests>=2.31
+altair>=5.4
+# R side (install in R): install.packages(c("nflseedR", "data.table", "jsonlite"))

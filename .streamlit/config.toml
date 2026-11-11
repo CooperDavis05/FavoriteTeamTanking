@@ -1,0 +1,27 @@
+# Light and dark are both available. The app follows the system setting by default;
+# switch any time from the menu (top right) > Settings > Theme.
+[theme]
+primaryColor = "#B31B1B"
+baseRadius = "small"
+font = "Chivo:https://fonts.googleapis.com/css2?family=Chivo:wght@300;400;700;900&display=swap"
+
+[theme.light]
+primaryColor = "#B31B1B"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F9F9F9"
+textColor = "#222222"
+borderColor = "#DDDDDD"
+
+[theme.dark]
+primaryColor = "#D0393A"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#171B23"
+textColor = "#E4E6EA"
+borderColor = "#2C313B"
+
+[server]
+headless = true
+enableStaticServing = true
+
+[browser]
+gatherUsageStats = false
