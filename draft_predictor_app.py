@@ -19,7 +19,7 @@ import odds_and_schedule as odds
 import scout_style as ss
 import season_simulator as simulator
 
-st.set_page_config(page_title="Is your favorite team tanking yet?", page_icon=":material/sports_football:", layout="wide")
+st.set_page_config(page_title="Is Your Favorite Team Tanking Yet?", page_icon=":material/sports_football:", layout="wide")
 
 SIM = "Sim"
 DARK = st.context.theme.type == "dark"     # charts and logos; the tables' colors switch on their own
@@ -255,7 +255,7 @@ pending = sum(1 for g in set(picks) | set(ran_picks) if picks.get(g) != ran_pick
 # ---------------------------------------------------------------- header
 remaining = len(probs)
 st.markdown(ss.band(
-    "Is your favorite team tanking yet?",
+    "Is Your Favorite Team Tanking Yet?",
     f"{season} season · {remaining} regular-season games left · Official NFL tiebreakers · "
     f"{len(picks)} game{'s' if len(picks) != 1 else ''} picked by you", kind="page"),
     unsafe_allow_html=True)
