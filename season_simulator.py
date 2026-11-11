@@ -22,8 +22,30 @@ def find_rscript() -> str:
     for cand in (shutil.which("Rscript"), "/usr/local/bin/Rscript", "/opt/homebrew/bin/Rscript",
                  "/Library/Frameworks/R.framework/Resources/bin/Rscript"):
         if cand and Path(cand).exists():
+            ensure_r_packages(cand)
             return cand
     raise FileNotFoundError("Rscript not found - install R and the nflseedR package.")
+
+
+# R packages the app installs itself when the machine doesn't have them (Streamlit Cloud).
+R_LIB = HERE / ".r-lib"
+_r_ready = False
+
+
+def ensure_r_packages(rscript: str) -> None:
+    global _r_ready
+    if _r_ready:
+        return
+    R_LIB.mkdir(exist_ok=True)
+    # Added in front of the usual libraries (R_LIBS, unlike R_LIBS_USER, keeps the user library too)
+    os.environ["R_LIBS"] = str(R_LIB)
+    check = subprocess.run([rscript, "-e", "library(nflseedR)"], capture_output=True, text=True)
+    if check.returncode != 0:
+        proc = subprocess.run([rscript, str(HERE / "install_r_packages.R"), str(R_LIB)],
+                              capture_output=True, text=True, cwd=HERE)
+        if proc.returncode != 0:
+            raise RuntimeError(f"Couldn't install nflseedR:\n{proc.stderr[-3000:]}")
+    _r_ready = True
 
 
 @dataclass

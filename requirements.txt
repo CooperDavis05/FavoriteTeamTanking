@@ -1,6 +1,7 @@
-streamlit>=1.50
+streamlit>=1.67
 pandas>=2.2
 numpy>=2.0
 requests>=2.31
 altair>=5.4
-# R side (install in R): install.packages(c("nflseedR", "data.table", "jsonlite"))
+# R comes from packages.txt on Streamlit Cloud; the app installs nflseedR itself on first run.
+# Locally: install.packages(c("nflseedR", "data.table", "jsonlite"))
