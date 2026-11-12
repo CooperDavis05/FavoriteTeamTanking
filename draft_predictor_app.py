@@ -799,8 +799,14 @@ with tab_team:
 
 # ---------------------------------------------------------------- lines & ratings
 with tab_lines:
+    l_weeks = sorted(int(w) for w in probs.week.unique())
+    lw_opts = ["All weeks"] + [f"Week {w}" for w in l_weeks]
+    if st.session_state.get("lines_week") not in lw_opts:
+        st.session_state["lines_week"] = lw_opts[1] if len(lw_opts) > 1 else lw_opts[0]
+    lines_week = st.pills("Week", lw_opts, key="lines_week") or "All weeks"
+    shown_lines = probs if lines_week == "All weeks" else probs[probs.week == int(lines_week.split()[1])]
     rows = []
-    for g in probs.sort_values(["week", "gameday"]).itertuples():
+    for g in shown_lines.sort_values(["week", "gameday"]).itertuples():
         pa = 1 - g.p_home
         day = pd.to_datetime(g.gameday).strftime("%a %b %d") if pd.notna(g.gameday) else ""
         sp = f"{g.spread_line:+.1f}" if pd.notna(g.spread_line) else "–"
@@ -819,7 +825,8 @@ with tab_lines:
         [("Wk", ""), ("Date", ""), ("Game", ""), ("Away win", ""), ("Home win", ""), ("Source", ""),
          (vi_img() + " ML", "VegasInsider Las Vegas consensus moneyline"), ("nflverse spread", "Home spread"),
          ("Model spread", "Home spread from the rating model")],
-        rows, title="Win Probabilities for Remaining Games",
+        rows, title="Win Probabilities for Remaining Games"
+                    + ("" if lines_week == "All weeks" else f" · {lines_week}"),
         max_height=620, left_cols=(2, 5), sortable=True,
     ))
 
