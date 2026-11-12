@@ -578,9 +578,7 @@ with tab_games:
             rows = []
             for i, r in enumerate(live.itertuples(), start=1):
                 moved = r.avg_pick - prev_avg.get(r.team) if prev_avg is not None and r.team in prev_avg else None
-                pred = ss.td((f"<span class='m'>{r.sos_pred:+.4f}</span>" if r.sos_pred
-                          else "<span class='m'>0</span>").replace("0.", "."), sort=round(r.sos_pred, 5))
-            rows.append([
+                rows.append([
                     ss.td(str(i), cls="b"),
                     ss.team_cell(r.team, r.logo),
                     record_cell(r.record, r.win_pct),
@@ -792,6 +790,8 @@ with tab_team:
                 change = ss.td(f"<b>{r.sos_change:+.4f}</b>".replace("0.", "."), sort=round(r.sos_change, 5))
             else:
                 change = ss.td("<span class='m'>0</span>", sort=0)
+            pred = ss.td((f"<span class='m'>{r.sos_pred:+.4f}</span>" if r.sos_pred
+                          else "<span class='m'>0</span>").replace("0.", "."), sort=round(r.sos_pred, 5))
             rows.append([
                 ss.td(str(r.week), cls="b"),
                 ss.team_cell(r.away_team, logo_url(r.away_team), " <span class='m'>@</span> ")
