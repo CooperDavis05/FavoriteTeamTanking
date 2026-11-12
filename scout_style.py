@@ -70,6 +70,58 @@ def mix(a: str, b: str, t: float) -> str:
     return "#" + "".join(f"{round(x + (y - x) * t):02X}" for x, y in zip(ra, rb))
 
 
+# ---------------------------------------------------------------- light / dark accents
+LIGHT_BG, DARK_BG = "#FFFFFF", "#0E1117"
+
+
+def _rel_lum(hex_: str) -> float:
+    """WCAG relative luminance."""
+    def ch(c):
+        c /= 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (ch(c) for c in _rgb(hex_))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast(a: str, b: str) -> float:
+    la, lb = sorted((_rel_lum(a), _rel_lum(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+def _shift_lightness(hex_: str, lightness: float) -> str:
+    """Same hue and saturation, new HSL lightness (0-1)."""
+    import colorsys
+    r, g, b = (c / 255 for c in _rgb(hex_))
+    h, _, sat = colorsys.rgb_to_hls(r, g, b)
+    r, g, b = colorsys.hls_to_rgb(h, min(max(lightness, 0.0), 1.0), sat)
+    return "#" + "".join(f"{round(x * 255):02X}" for x in (r, g, b))
+
+
+def accent(primary: str, secondary: str, dark: bool, min_ratio: float = 3.0) -> str:
+    """A team color that stands out on the page background (text, underlines, button fills):
+    the primary if it already does, else the primary made lighter (dark mode) or darker (light
+    mode) with its hue and saturation kept, so navy turns brighter blue rather than gray.
+    Colorless primaries (black, gray) use the team's other color when that one works."""
+    import colorsys
+    bg = DARK_BG if dark else LIGHT_BG
+    if contrast(primary, bg) >= min_ratio:
+        return primary
+    r, g, b = (c / 255 for c in _rgb(primary))
+    _, light, sat = colorsys.rgb_to_hls(r, g, b)
+    if sat < 0.15 and contrast(secondary, bg) >= min_ratio:
+        return secondary
+    for k in range(1, 101):
+        c = _shift_lightness(primary, light + k / 100 if dark else light - k / 100)
+        if contrast(c, bg) >= min_ratio:
+            return c
+    return "#FFFFFF" if dark else "#000000"
+
+
+def band_fill(primary: str, dark: bool) -> str:
+    """Team-colored block: the primary, lifted just enough in dark mode to show on the page."""
+    return accent(primary, primary, dark, min_ratio=1.6) if dark else primary
+
+
 def rank_fill(rank: float, n: int) -> str:
     """Rank 1 = teal, rank n = pink, like D4's col_numeric over ranks."""
     return mix(GOOD, BAD, (rank - 1) / max(n - 1, 1))
@@ -81,34 +133,38 @@ def ranks(s: pd.Series, higher_is_better: bool) -> pd.Series:
 
 
 # ---------------------------------------------------------------- page CSS
-def page_css(primary: str, text: str) -> str:
+def page_css(primary: str, secondary: str) -> str:
     """Neutral 538-style page: white title blocks with a dark rule, no colored bars.
-    The report color is only an accent (buttons, tab underline, page rule)."""
+    The site color is only an accent (buttons, tab underline, page rule). It has a light-mode
+    and a dark-mode version so it stays visible on either background."""
+    acc_l, acc_d = accent(primary, secondary, False, 3.5), accent(primary, secondary, True, 3.5)
     return f"""
 <style>
 :root {{ --sc-ink:#222222; --sc-head:#111111; --sc-muted:#666666; --sc-faint:#999999; --sc-rule:#222222;
-    --sc-line:#E4E4E4; --sc-zebra:#F9F9F9; --sc-bg:#FFFFFF; }}
+    --sc-line:#E4E4E4; --sc-zebra:#F9F9F9; --sc-bg:#FFFFFF;
+    --sc-acc:{acc_l}; --sc-acc-text:{on_color(acc_l)}; }}
 :root[data-sc-theme="dark"] {{ --sc-ink:#E4E6EA; --sc-head:#F3F4F6; --sc-muted:#A3A8B0; --sc-faint:#6F757E;
-    --sc-rule:#C9CDD3; --sc-line:#2A2F38; --sc-zebra:#151920; --sc-bg:#0E1117; }}
+    --sc-rule:#C9CDD3; --sc-line:#2A2F38; --sc-zebra:#151920; --sc-bg:#0E1117;
+    --sc-acc:{acc_d}; --sc-acc-text:{on_color(acc_d)}; }}
 @import url('https://fonts.googleapis.com/css2?family=Chivo:wght@300;400;700;900&display=swap');
 .block-container {{ padding-top: 2.2rem; }}
 h1, h2, h3, h4 {{ font-weight: 900 !important; letter-spacing: -0.01em; }}
 [data-testid="stTab"], [data-testid="stTab"] p, [role="tab"], [role="tab"] p {{
     font-family: 'Chivo', sans-serif !important; font-weight: 900 !important; color: var(--sc-ink);
     text-transform: uppercase; letter-spacing: 0.03em; font-size: 0.9rem !important; }}
-[data-testid="stTab"][aria-selected="true"] p {{ color: {primary} !important; }}
+[data-testid="stTab"][aria-selected="true"] p {{ color: var(--sc-acc) !important; }}
 [data-testid="stTabs"] .react-aria-SelectionIndicator, [data-baseweb="tab-highlight"] {{
-    background-color: {primary} !important; }}
-.stButton button[kind="primary"] {{ background: {primary}; border-color: {primary}; color: {text};
+    background-color: var(--sc-acc) !important; }}
+.stButton button[kind="primary"] {{ background: var(--sc-acc); border-color: var(--sc-acc); color: var(--sc-acc-text);
     font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; }}
-.stButton button[kind="primary"]:hover {{ filter: brightness(1.12); border-color: {primary}; color: {text}; }}
+.stButton button[kind="primary"]:hover {{ filter: brightness(1.12); border-color: var(--sc-acc); color: var(--sc-acc-text); }}
 .stButton button p {{ font-weight: 700; }}
 div[data-testid="stVerticalBlockBorderWrapper"] {{ border-radius: 2px; }}
 
 .scout-band {{ color: var(--sc-head); padding: 2px 0 6px; border-bottom: 2px solid var(--sc-rule); }}
 .scout-band .t {{ font-size: 1.5rem; font-weight: 900; line-height: 1.15; }}
 .scout-band .s {{ font-size: 0.88rem; font-weight: 400; color: var(--sc-muted); margin-top: 3px; }}
-.scout-band.page {{ border-bottom: 4px solid {primary}; padding-bottom: 8px; }}
+.scout-band.page {{ border-bottom: 4px solid var(--sc-acc); padding-bottom: 8px; }}
 .scout-band.page .t {{ font-size: 2.3rem; }}
 .scout-band.mini {{ padding: 0 0 4px; }}
 .scout-band.mini .t {{ font-size: 1rem; text-transform: uppercase; letter-spacing: 0.03em; }}
@@ -123,7 +179,7 @@ table.scout thead th {{ background: var(--sc-bg) !important; color: var(--sc-ink
     white-space: nowrap; border-top: 1px solid var(--sc-rule); border-bottom: 2px solid var(--sc-rule) !important;
     position: sticky; top: 0; z-index: 1; }}
 table.scout.sortable thead th {{ cursor: pointer; user-select: none; }}
-table.scout.sortable thead th:hover {{ color: {primary} !important; }}
+table.scout.sortable thead th:hover {{ color: var(--sc-acc) !important; }}
 table.scout.sortable thead th::after {{ content: " ↕"; color: var(--sc-faint); font-size: 0.7rem; }}
 table.scout.sortable thead th[data-dir="asc"]::after {{ content: " ▲"; color: var(--sc-ink); }}
 table.scout.sortable thead th[data-dir="desc"]::after {{ content: " ▼"; color: var(--sc-ink); }}
@@ -170,12 +226,16 @@ div[data-testid="stPopover"] > div > button {{ min-height: 44px; justify-content
 
 
 def team_band_css(primary: str) -> str:
-    text = on_color(primary)
-    return (f"<style>.team-band .scout-band {{ background:{primary}; color:{text}; }}"
-            f".team-band table.scout thead th {{ background:{primary} !important; color:{text} !important;"
-            f" border-top:none; border-bottom:2px solid {text} !important; }}"
-            f".team-band table.scout.sortable thead th::after, .team-band table.scout.sortable thead th[data-dir]::after"
-            f" {{ color:{text}; }}</style>")
+    """Team-colored header blocks (Team outlook), lifted a little in dark mode so a navy or
+    black team color still shows against the dark page."""
+    fl, fd = band_fill(primary, False), band_fill(primary, True)
+    return (f"<style>:root {{ --tb-fill:{fl}; --tb-text:{on_color(fl)}; }}"
+            f":root[data-sc-theme='dark'] {{ --tb-fill:{fd}; --tb-text:{on_color(fd)}; }}"
+            ".team-band .scout-band { background:var(--tb-fill); color:var(--tb-text); }"
+            ".team-band table.scout thead th { background:var(--tb-fill) !important; color:var(--tb-text) !important;"
+            " border-top:none; border-bottom:2px solid var(--tb-text) !important; }"
+            ".team-band table.scout.sortable thead th::after, .team-band table.scout.sortable thead th[data-dir]::after"
+            " { color:var(--tb-text); }</style>")
 
 
 def pick_button_css(game_buttons: list[tuple[str, str, bool]]) -> str:

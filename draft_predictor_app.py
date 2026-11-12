@@ -129,9 +129,9 @@ if st.session_state.get("scheme") not in SCHEMES:
 st.session_state.setdefault("n_sims", 1000)
 scheme = st.session_state["scheme"]
 n_sims = st.session_state["n_sims"]
-PRIMARY = ss.CORNELL[0] if scheme == "Cornell" else ss.TEAM_COLORS[scheme][0]
+PRIMARY, SECONDARY = ss.CORNELL if scheme == "Cornell" else ss.TEAM_COLORS[scheme]
 BAND_TEXT = ss.on_color(PRIMARY)
-st.markdown(ss.page_css(PRIMARY, BAND_TEXT), unsafe_allow_html=True)
+st.markdown(ss.page_css(PRIMARY, SECONDARY), unsafe_allow_html=True)
 st.html(ss.THEME_JS, unsafe_allow_javascript=True)
 CHART_INK = "#C9CDD3" if DARK else "#333333"
 CHART_BG = "#0E1117" if DARK else "#FFFFFF"
@@ -282,7 +282,7 @@ c3, c1, c2, c4 = st.columns([1.5, 1.7, 1, 1.5], vertical_alignment="bottom", gap
 top_slot = c1.empty()   # filled after the simulation so the label reflects the latest run
 c2.button("Clear all picks", on_click=clear_picks, width="stretch", disabled=not picks)
 with c3:   # Report colors, leftmost
-    team_picker("scheme", SCHEMES, "Choose Team-Based Site Color",
+    team_picker("scheme", SCHEMES, "Choose A Team-Based Site Color",
                 logo=lambda t: CORNELL_LOGO if t == "Cornell" else logo_url(t),
                 name=lambda t: "Cornell Big Red" if t == "Cornell" else t, cols=4)
 with c4:
@@ -525,7 +525,7 @@ with tab_games:
                  ".st-key-view_week button p, .st-key-view_team button p { font-size: 0.95rem; "
                  "letter-spacing: 0.03em; text-transform: uppercase; font-weight: 900; }"
                  ".st-key-view_week button[kind=secondary]:hover, .st-key-view_team button[kind=secondary]:hover "
-                 f"{{ border-color: {PRIMARY}; color: {PRIMARY}; }}</style>")
+                 "{ border-color: var(--sc-acc); color: var(--sc-acc); }</style>")
 
             if view == "By week":
                 n_picked = {w: sum(1 for gid in probs.loc[probs.week == w, "game_id"] if gid in picks)
