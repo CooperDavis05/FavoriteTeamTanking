@@ -578,7 +578,9 @@ with tab_games:
             rows = []
             for i, r in enumerate(live.itertuples(), start=1):
                 moved = r.avg_pick - prev_avg.get(r.team) if prev_avg is not None and r.team in prev_avg else None
-                rows.append([
+                pred = ss.td((f"<span class='m'>{r.sos_pred:+.4f}</span>" if r.sos_pred
+                          else "<span class='m'>0</span>").replace("0.", "."), sort=round(r.sos_pred, 5))
+            rows.append([
                     ss.td(str(i), cls="b"),
                     ss.team_cell(r.team, r.logo),
                     record_cell(r.record, r.win_pct),
@@ -717,6 +719,16 @@ with tab_team:
     games_of = pd.concat([reg_all.home_team, reg_all.away_team]).value_counts()
     sos_den = float(sum(meets[o] * games_of[o] for o in meets.index))
 
+    # where SOS stands now (played games + your picks) and where it's projected to finish:
+    # each undecided game adds its expected winner's meetings, weighted by the win chance
+    done = simulator._with_picks(sched, picks)
+    done = done[done.result.notna()]
+    won = pd.concat([done.home_team[done.result > 0], done.away_team[done.result < 0]]).value_counts()
+    tied = pd.concat([done.home_team[done.result == 0], done.away_team[done.result == 0]]).value_counts()
+    played_n = pd.concat([done.home_team, done.away_team]).value_counts()
+    opp_wins = sum(m * (won.get(o, 0) + 0.5 * tied.get(o, 0)) for o, m in meets.items())
+    opp_played = sum(m * played_n.get(o, 0) for o, m in meets.items())
+
     left = probs[~probs.game_id.isin(picks)]
     guide = pd.DataFrame({"week": left.week, "away_team": left.away_team, "home_team": left.home_team,
                           "p_home": left.p_home})
@@ -732,6 +744,10 @@ with tab_team:
     guide["sos_change"] = np.where(                              # SOS change from the rooted-for result
         guide.own, np.where(guide.home_team == team, guide.m_away, guide.m_home),
         -(guide.m_home - guide.m_away).abs()) / sos_den
+    # predicted SOS change: the SOS this game adds, weighted by each side's chance of winning
+    guide["sos_pred"] = (guide.p_home * guide.m_home + (1 - guide.p_home) * guide.m_away) / sos_den
+    sos_now = opp_wins / opp_played if opp_played else float("nan")
+    sos_proj = (opp_wins + guide.sos_pred.sum() * sos_den) / sos_den
     guide["sort"] = np.where(guide.own, 1.0, guide.sos_change.abs())
     guide = guide.sort_values(["sort", "week"], ascending=[False, True])
 
@@ -742,6 +758,9 @@ with tab_team:
     wk_opts = ["All weeks"] + [f"Week {w}" for w in g_weeks]
     if st.session_state.get("root_week") not in wk_opts:
         st.session_state["root_week"] = wk_opts[1] if len(wk_opts) > 1 else wk_opts[0]
+    sos_txt = lambda v: f"{v:.3f}".replace("0.", ".", 1) if v == v else "–"
+    st.caption(f"{team}'s full-schedule opponents so far: **{sos_txt(sos_now)}** · projected final SOS: "
+               f"**{sos_txt(sos_proj)}** (each undecided game weighted by its win chance)")
     rc1, rc2 = st.columns([3, 1.2], vertical_alignment="bottom")
     root_week = rc1.pills("Week", wk_opts, key="root_week") or "All weeks"
     others_only = rc2.toggle("Other teams' games only", key="root_others",
@@ -778,7 +797,7 @@ with tab_team:
                 ss.team_cell(r.away_team, logo_url(r.away_team), " <span class='m'>@</span> ")
                 + ss.team_cell(r.home_team, logo_url(r.home_team)),
                 ss.td(plays or "<span class='m'>Neither</span>", sort=r.m_away + r.m_home),
-                root, chance, change,
+                root, chance, change, pred,
                 ss.td("Own game: a loss" if r.own else ("Lower SOS" if r.sos_change else ""),
                       cls="m" if not r.own else ""),
             ])
@@ -787,12 +806,15 @@ with tab_team:
              ("Root for", f"The result that helps {team} pick earlier"),
              ("Chance", "Chance the result you're rooting for happens"),
              ("SOS change", f"Exact change in {team}'s final strength of schedule from that result"),
+             ("Predicted", f"Expected SOS this game adds for {team}: each side's wins weighted by its chance "
+                           "of winning"),
              ("Why", "")],
             rows,
             footnote=f"SOS is {team}'s opponents' combined record ({int(sos_den)} games, each opponent counted "
                      f"once per meeting). A win for a team {team} plays twice adds 2/{int(sos_den)}; lower SOS "
                      f"picks first when records tie. For {team}'s own games the loss matters far more than the "
-                     "small SOS rise it brings. Games you've picked aren't listed."
+                     "small SOS rise it brings. Predicted is the SOS each game is expected to add given the lines; "
+                     "they sum, with wins already banked, to the projected final SOS. Games you've picked aren't listed."
                      + (" All weeks lists only games that change SOS." if root_week == "All weeks" else ""),
             left_cols=(1, 2, 3), sortable=True, max_height=620,
         ) + "</div>")
