@@ -700,27 +700,53 @@ with tab_team:
     )
     st.altair_chart(bars, width="stretch", theme=None)
 
-    guide = simulator.rooting_guide(res, team, top=10)
-    if guide.empty:
-        st.write("No undecided games left.")
+    guide = simulator.rooting_guide(res, team, top=None)
+    st.write("")
+    html(ss.band(f"{team} Rooting Guide",
+                 "How each game still left to chance moves this team's average pick"))
+    g_weeks = sorted(int(w) for w in guide.week.unique()) if not guide.empty else []
+    wk_opts = ["All weeks"] + [f"Week {w}" for w in g_weeks]
+    if st.session_state.get("root_week") not in wk_opts:
+        st.session_state["root_week"] = wk_opts[1] if len(wk_opts) > 1 else wk_opts[0]
+    rc1, rc2 = st.columns([3, 1.2], vertical_alignment="bottom")
+    root_week = rc1.pills("Week", wk_opts, key="root_week") or "All weeks"
+    others_only = rc2.toggle("Other teams' games only", key="root_others",
+                             help=f"Hide {team}'s own games to see how the rest of the league affects its pick.")
+    if root_week != "All weeks":
+        guide = guide[guide.week == int(root_week.split()[1])]
+    if others_only:
+        guide = guide[(guide.home_team != team) & (guide.away_team != team)]
+    shown = guide if root_week != "All weeks" else guide.head(15)
+    if shown.empty:
+        st.caption("No undecided games here." if not others_only else
+                   f"No undecided games here besides {team}'s own.")
     else:
+        p_home_of = probs.set_index(["week", "away_team", "home_team"]).p_home
         rows = []
-        for r in guide.itertuples():
+        for r in shown.itertuples():
+            noise = r.swing < 2 * r.swing_se          # within simulation noise
+            ph = p_home_of.get((r.week, r.away_team, r.home_team))
+            p_root = None if ph is None else (ph if r.root_for == r.home_team else 1 - ph)
             rows.append([
                 ss.td(str(r.week), cls="b"),
                 ss.team_cell(r.away_team, logo_url(r.away_team), " <span class='m'>@</span> ")
                 + ss.team_cell(r.home_team, logo_url(r.home_team)),
                 ss.team_cell(r.root_for, logo_url(r.root_for)),
+                ss.td(pct(p_root, 0) if p_root is not None else "–", sort=p_root or 0),
                 avg_pick_cell(r.pick_if_root),
                 avg_pick_cell(r.pick_if_not),
-                ss.td(f"<b>{r.swing:.2f}</b>", sort=round(r.swing, 3)),
+                ss.td(f"<span class='m'>{r.swing:.2f}</span>" if noise else f"<b>{r.swing:.2f}</b>",
+                      sort=round(r.swing, 3)),
             ])
         html("<div class='team-band'>" + ss.table(
             [("Wk", ""), ("Game", ""), ("Root for", "The result that gives an earlier pick"),
+             ("Chance", "Chance the result you're rooting for happens"),
              ("Avg pick if yes", ""), ("Avg pick if no", ""), ("Swing", "Picks gained or lost")],
-            rows, title=f"{team} Rooting Guide",
-            subtitle="Games still left to chance that move this team's pick the most",
-            footnote="Estimated from the simulations.",
+            rows,
+            footnote=("Top 15 games across all weeks. " if root_week == "All weeks" else "")
+                     + f"Estimated from {res.n_sims:,} simulated seasons. Faded swings are within "
+                       "simulation noise, so they could really be zero; more simulations sharpen them. "
+                       "Games you've picked aren't listed.",
             left_cols=(1, 2), sortable=True,
         ) + "</div>")
 

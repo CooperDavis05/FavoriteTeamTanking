@@ -148,18 +148,22 @@ def pick_distribution(res: SimResult) -> pd.DataFrame:
     return d.rename(columns={"draft_rank": "pick"})
 
 
-def rooting_guide(res: SimResult, team: str, top: int = 10) -> pd.DataFrame:
+def rooting_guide(res: SimResult, team: str, top: int | None = 10) -> pd.DataFrame:
     """For each game left to chance: the team's average pick if home wins vs if away wins."""
     sg = res.sim_games
     if sg.empty:
         return pd.DataFrame()
     picks = res.standings.loc[res.standings.team == team, ["sim", "draft_rank"]]
     m = sg.merge(picks, on="sim")
-    agg = (m.groupby(["week", "away_team", "home_team", "home_win"]).draft_rank.mean()
-           .unstack("home_win"))
-    agg = agg.dropna().rename(columns={0: "pick_if_away", 1: "pick_if_home"}).reset_index()
+    grp = m.groupby(["week", "away_team", "home_team", "home_win"]).draft_rank
+    stats = grp.agg(["mean", "var", "size"]).unstack("home_win").dropna()
+    agg = pd.DataFrame({"pick_if_away": stats[("mean", 0)], "pick_if_home": stats[("mean", 1)]}).reset_index()
     agg["swing"] = (agg.pick_if_home - agg.pick_if_away).abs()
+    # simulation noise: standard error of the difference between the two averages
+    agg["swing_se"] = np.sqrt((stats[("var", 0)] / stats[("size", 0)]
+                               + stats[("var", 1)] / stats[("size", 1)]).to_numpy())
     agg["root_for"] = np.where(agg.pick_if_home < agg.pick_if_away, agg.home_team, agg.away_team)
     agg["pick_if_root"] = agg[["pick_if_home", "pick_if_away"]].min(axis=1)
     agg["pick_if_not"] = agg[["pick_if_home", "pick_if_away"]].max(axis=1)
-    return agg.sort_values("swing", ascending=False).head(top).reset_index(drop=True)
+    agg = agg.sort_values("swing", ascending=False)
+    return (agg if top is None else agg.head(top)).reset_index(drop=True)
