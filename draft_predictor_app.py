@@ -12,6 +12,7 @@ import random
 from pathlib import Path
 
 import altair as alt
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -700,54 +701,95 @@ with tab_team:
     )
     st.altair_chart(bars, width="stretch", theme=None)
 
-    guide = simulator.rooting_guide(res, team, top=None)
+    # ---- rooting guide by strength of schedule: exact, no simulation needed.
+    # SOS = opponents' combined wins / their combined games, each opponent counted once per
+    # meeting. A game moves one win between its two teams, so it changes this team's SOS by
+    # (times it plays the winner - times it plays the loser) / its opponents' total games.
+    reg_all = sched[sched.game_type == "REG"]
+    mine = reg_all[(reg_all.home_team == team) | (reg_all.away_team == team)]
+    opps = np.where(mine.home_team == team, mine.away_team, mine.home_team)
+    meets = pd.Series(opps).value_counts()                      # times this team plays each opponent
+    games_of = pd.concat([reg_all.home_team, reg_all.away_team]).value_counts()
+    sos_den = float(sum(meets[o] * games_of[o] for o in meets.index))
+
+    left = probs[~probs.game_id.isin(picks)]
+    guide = pd.DataFrame({"week": left.week, "away_team": left.away_team, "home_team": left.home_team,
+                          "p_home": left.p_home})
+    guide["m_away"] = guide.away_team.map(meets).fillna(0).astype(int)
+    guide["m_home"] = guide.home_team.map(meets).fillna(0).astype(int)
+    guide["own"] = (guide.home_team == team) | (guide.away_team == team)
+    # own games: root for the opponent (the loss counts far more than SOS); others: the side
+    # this team plays fewer times, since a lower SOS wins the draft tiebreak
+    guide["root_for"] = np.select(
+        [guide.own & (guide.home_team == team), guide.own,
+         guide.m_home < guide.m_away, guide.m_away < guide.m_home],
+        [guide.away_team, guide.home_team, guide.home_team, guide.away_team], default="")
+    guide["sos_change"] = np.where(                              # SOS change from the rooted-for result
+        guide.own, np.where(guide.home_team == team, guide.m_away, guide.m_home),
+        -(guide.m_home - guide.m_away).abs()) / sos_den
+    guide["sort"] = np.where(guide.own, 1.0, guide.sos_change.abs())
+    guide = guide.sort_values(["sort", "week"], ascending=[False, True])
+
     st.write("")
     html(ss.band(f"{team} Rooting Guide",
-                 "How each game still left to chance moves this team's average pick"))
-    g_weeks = sorted(int(w) for w in guide.week.unique()) if not guide.empty else []
+                 f"Which result in each game lowers {team}'s strength of schedule, the draft tiebreaker"))
+    g_weeks = sorted(int(w) for w in guide.week.unique())
     wk_opts = ["All weeks"] + [f"Week {w}" for w in g_weeks]
     if st.session_state.get("root_week") not in wk_opts:
         st.session_state["root_week"] = wk_opts[1] if len(wk_opts) > 1 else wk_opts[0]
     rc1, rc2 = st.columns([3, 1.2], vertical_alignment="bottom")
     root_week = rc1.pills("Week", wk_opts, key="root_week") or "All weeks"
     others_only = rc2.toggle("Other teams' games only", key="root_others",
-                             help=f"Hide {team}'s own games to see how the rest of the league affects its pick.")
+                             help=f"Hide {team}'s own games to see how the rest of the league affects it.")
     if root_week != "All weeks":
         guide = guide[guide.week == int(root_week.split()[1])]
+    else:                                                        # all weeks: only games that matter
+        guide = guide[guide.own | (guide.sos_change != 0)]
     if others_only:
-        guide = guide[(guide.home_team != team) & (guide.away_team != team)]
-    shown = guide if root_week != "All weeks" else guide.head(15)
-    if shown.empty:
+        guide = guide[~guide.own]
+    if guide.empty:
         st.caption("No undecided games here." if not others_only else
                    f"No undecided games here besides {team}'s own.")
     else:
-        p_home_of = probs.set_index(["week", "away_team", "home_team"]).p_home
         rows = []
-        for r in shown.itertuples():
-            noise = r.swing < 2 * r.swing_se          # within simulation noise
-            ph = p_home_of.get((r.week, r.away_team, r.home_team))
-            p_root = None if ph is None else (ph if r.root_for == r.home_team else 1 - ph)
+        for r in guide.itertuples():
+            plays = " · ".join(f"{t} {m}×" for t, m in ((r.away_team, r.m_away), (r.home_team, r.m_home)) if m)
+            if r.root_for:
+                p_root = r.p_home if r.root_for == r.home_team else 1 - r.p_home
+                root = ss.team_cell(r.root_for, logo_url(r.root_for))
+                chance = ss.td(pct(p_root, 0), sort=round(p_root, 4))
+            else:
+                root = ss.td("<span class='m'>No effect</span>", sort="~")
+                chance = ss.td("<span class='m'>–</span>", sort=-1)
+            if r.own:
+                change = ss.td(f"<span class='m'>{r.sos_change:+.4f}</span>".replace("0.", "."),
+                               sort=round(r.sos_change, 5))
+            elif r.sos_change:
+                change = ss.td(f"<b>{r.sos_change:+.4f}</b>".replace("0.", "."), sort=round(r.sos_change, 5))
+            else:
+                change = ss.td("<span class='m'>0</span>", sort=0)
             rows.append([
                 ss.td(str(r.week), cls="b"),
                 ss.team_cell(r.away_team, logo_url(r.away_team), " <span class='m'>@</span> ")
                 + ss.team_cell(r.home_team, logo_url(r.home_team)),
-                ss.team_cell(r.root_for, logo_url(r.root_for)),
-                ss.td(pct(p_root, 0) if p_root is not None else "–", sort=p_root or 0),
-                avg_pick_cell(r.pick_if_root),
-                avg_pick_cell(r.pick_if_not),
-                ss.td(f"<span class='m'>{r.swing:.2f}</span>" if noise else f"<b>{r.swing:.2f}</b>",
-                      sort=round(r.swing, 3)),
+                ss.td(plays or "<span class='m'>Neither</span>", sort=r.m_away + r.m_home),
+                root, chance, change,
+                ss.td("Own game: a loss" if r.own else ("Lower SOS" if r.sos_change else ""),
+                      cls="m" if not r.own else ""),
             ])
         html("<div class='team-band'>" + ss.table(
-            [("Wk", ""), ("Game", ""), ("Root for", "The result that gives an earlier pick"),
+            [("Wk", ""), ("Game", ""), (f"{team} plays", f"Times {team} plays each team this season"),
+             ("Root for", f"The result that helps {team} pick earlier"),
              ("Chance", "Chance the result you're rooting for happens"),
-             ("Avg pick if yes", ""), ("Avg pick if no", ""), ("Swing", "Picks gained or lost")],
+             ("SOS change", f"Exact change in {team}'s final strength of schedule from that result"),
+             ("Why", "")],
             rows,
-            footnote=("Top 15 games across all weeks. " if root_week == "All weeks" else "")
-                     + f"Estimated from {res.n_sims:,} simulated seasons. Faded swings are within "
-                       "simulation noise, so they could really be zero; more simulations sharpen them. "
-                       "Games you've picked aren't listed.",
-            left_cols=(1, 2), sortable=True,
+            footnote=f"SOS is {team}'s opponents' combined record ({int(sos_den)} games, each opponent counted "
+                     f"once per meeting). A win for a team {team} plays twice adds 2/{int(sos_den)}; lower SOS "
+                     f"picks first when records tie. For {team}'s own games the loss matters far more than the "
+                     "small SOS rise it brings. Games you've picked aren't listed."
+                     + (" All weeks lists only games that change SOS." if root_week == "All weeks" else ""),
+            left_cols=(1, 2, 3), sortable=True, max_height=620,
         ) + "</div>")
 
 # ---------------------------------------------------------------- lines & ratings
