@@ -282,7 +282,7 @@ c3, c1, c2, c4 = st.columns([1.5, 1.7, 1, 1.5], vertical_alignment="bottom", gap
 top_slot = c1.empty()   # filled after the simulation so the label reflects the latest run
 c2.button("Clear all picks", on_click=clear_picks, width="stretch", disabled=not picks)
 with c3:   # Report colors, leftmost
-    team_picker("scheme", SCHEMES, "Site Color",
+    team_picker("scheme", SCHEMES, "Choose Team-Based Site Color",
                 logo=lambda t: CORNELL_LOGO if t == "Cornell" else logo_url(t),
                 name=lambda t: "Cornell Big Red" if t == "Cornell" else t, cols=4)
 with c4:
