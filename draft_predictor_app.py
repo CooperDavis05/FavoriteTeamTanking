@@ -62,9 +62,14 @@ def source_html(src: str) -> str:
     return vi_img() if src.startswith("VegasInsider") else f"<span class='src-txt'>{src}</span>"
 
 
-def _choose_team(key: str, team) -> None:
-    st.session_state[key] = team
+def _choose_team(key: str, team, linked: tuple = ()) -> None:
+    for k in (key, *linked):                     # linked pickers follow the same team
+        st.session_state[k] = team
     st.session_state[f"{key}__pop"] = False      # close the logo grid once a team is picked
+
+
+# The By team picker (Pick games) and Team outlook show the same team.
+TEAM_LINK = {"team_sel": ("outlook_team",), "outlook_team": ("team_sel",)}
 
 
 def team_picker(key: str, options: list, label: str, logo, name=str, sub=None, cols: int = 4,
@@ -82,7 +87,7 @@ def team_picker(key: str, options: list, label: str, logo, name=str, sub=None, c
             grid[i % cols].button(
                 f"![]({logo(t)}) **{name(t)}**" + (f" {sub(t)}" if sub else ""),
                 key=f"{key}__{t}", width="stretch", type="primary" if t == cur else "secondary",
-                on_click=_choose_team, args=(key, t))
+                on_click=_choose_team, args=(key, t, TEAM_LINK.get(key, ())))
     return cur
 LOAD_SEED = 2026                                     # every load-in uses this same seed
 SNAPSHOT_DIR = Path(__file__).resolve().parent / ".sim_cache"
